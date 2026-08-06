@@ -32,6 +32,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
+#include <cmath>
+
 #include <pcl_conversions/pcl_conversions.h>
 
 #ifdef PRE_ROS_IRON
@@ -365,6 +367,17 @@ void OdometryROS::init(bool stereoParams, bool visParams, bool icpParams)
 	this->updateParameters(parameters_);
 
 	odometry_ = Odometry::create(parameters_);
+	if(odometry_->canProcessExternalVelocity())
+	{
+		// 只有 OpenVINS 且参数显式开启时才创建订阅，其他策略和旧配置不受影响。
+		const int legOdomQueueSize = this->declare_parameter("leg_odom_queue_size", 200);
+		const int qosLegOdom = this->declare_parameter("qos_leg_odom", (int)qos_);
+		legOdomSub_ = create_subscription<nav_msgs::msg::Odometry>(
+			"leg_odom",
+			rclcpp::QoS(legOdomQueueSize).reliability((rmw_qos_reliability_policy_t)qosLegOdom),
+			std::bind(&OdometryROS::callbackLegOdometry, this, std::placeholders::_1));
+		RCLCPP_INFO(this->get_logger(), "odometry: Subscribing to leg odometry topic %s", legOdomSub_->get_topic_name());
+	}
 	if(!initialPose_.isIdentity())
 	{
 		odometry_->reset(initialPose_);
@@ -466,6 +479,49 @@ void OdometryROS::callbackIMU(const sensor_msgs::msg::Imu::SharedPtr msg)
 			}
 			dataMutex_.unlock();
 		}
+	}
+}
+
+void OdometryROS::callbackLegOdometry(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+	// 输入必须是 base_link 原点、表达在 base_link 下的三维速度和独立 yaw_rate。
+	if(this->isPaused())
+	{
+		return;
+	}
+	if(msg->child_frame_id != frameId_)
+	{
+		RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+			"Dropping leg odometry: child_frame_id must be \"%s\", received \"%s\".",
+			frameId_.c_str(), msg->child_frame_id.c_str());
+		return;
+	}
+	const double stamp = rtabmap_conversions::timestampFromROS(msg->header.stamp);
+	if(stamp <= 0.0 || !std::isfinite(stamp) ||
+		!std::isfinite(msg->twist.twist.linear.x) || !std::isfinite(msg->twist.twist.linear.y) ||
+		!std::isfinite(msg->twist.twist.linear.z) || !std::isfinite(msg->twist.twist.angular.z))
+	{
+		RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Dropping leg odometry with invalid timestamp or twist.");
+		return;
+	}
+	const int covarianceIndices[4] = {0, 1, 2, 5};
+	for(int row=0; row<4; ++row)
+	{
+		for(int col=0; col<4; ++col)
+		{
+			if(!std::isfinite(msg->twist.covariance[covarianceIndices[row]*6+covarianceIndices[col]]))
+			{
+				RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+					"Dropping leg odometry with non-finite selected covariance.");
+				return;
+			}
+		}
+	}
+	UScopeMutex lock(legOdomMutex_);
+	legOdoms_[stamp] = msg;
+	while(legOdoms_.size() > 1000)
+	{
+		legOdoms_.erase(legOdoms_.begin());
 	}
 }
 
@@ -626,6 +682,37 @@ void OdometryROS::processData()
 		SensorData dataIMU(imu, 0, imus[i].first);
 		odometry_->process(dataIMU);
 		imuProcessed_ = true;
+	}
+
+	// 足式回调只负责缓存；在里程计线程统一转换和转交，避免并发访问 OpenVINS。
+	std::vector<nav_msgs::msg::Odometry::ConstSharedPtr> legOdoms;
+	{
+		UScopeMutex m(legOdomMutex_);
+		for(const auto & entry : legOdoms_)
+		{
+			legOdoms.push_back(entry.second);
+		}
+		legOdoms_.clear();
+	}
+	const int covarianceIndices[4] = {0, 1, 2, 5};
+	for(const auto & legOdom : legOdoms)
+	{
+		rtabmap::ExternalVelocityMeasurement measurement;
+		measurement.stamp = rtabmap_conversions::timestampFromROS(legOdom->header.stamp);
+		measurement.velocity = {{
+			legOdom->twist.twist.linear.x,
+			legOdom->twist.twist.linear.y,
+			legOdom->twist.twist.linear.z,
+			legOdom->twist.twist.angular.z}};
+		for(int row=0; row<4; ++row)
+		{
+			for(int col=0; col<4; ++col)
+			{
+				measurement.covariance[row*4+col] =
+					legOdom->twist.covariance[covarianceIndices[row]*6+covarianceIndices[col]];
+			}
+		}
+		odometry_->processExternalVelocity(measurement);
 	}
 
 	Transform groundTruth;
@@ -1280,6 +1367,7 @@ void OdometryROS::processData()
 		RCLCPP_INFO(this->get_logger(), "Odom: ratio=%f, std dev=%fm|%frad, update time=%fs delay=%fs", info.reg.icpInliersRatio, pose.isNull()?0.0f:std::sqrt(info.reg.covariance.at<double>(0,0)), pose.isNull()?0.0f:std::sqrt(info.reg.covariance.at<double>(5,5)), (rclcpp::Clock().now()-timeStart).seconds(), delay);
 	}
 
+	statusDiagnostic_.setExternalVelocityStatus(odometry_->externalVelocityDiagnostics());
 	statusDiagnostic_.setStatus(pose.isNull(), processedMsgs_, droppedMsgs_);
 	processedMsgs_ = 0;
 	droppedMsgs_ = 0;
@@ -1332,6 +1420,9 @@ void OdometryROS::reset(const Transform & pose)
 	imuMutex_.lock();
 	imus_.clear();
 	imuMutex_.unlock();
+	legOdomMutex_.lock();
+	legOdoms_.clear();
+	legOdomMutex_.unlock();
 	imuLocalTransform_.setNull();
 	this->flushCallbacks();
 }
@@ -1417,6 +1508,12 @@ void OdometryROS::OdomStatusTask::setStatus(bool isLost, int processedMsgs, int 
 	droppedMsgs_ += droppedMsgs;
 }
 
+void OdometryROS::OdomStatusTask::setExternalVelocityStatus(const std::map<std::string, std::string> & status)
+{
+	// 保存快照，diagnostic_updater 下一次运行时统一发布。
+	externalVelocityStatus_ = status;
+}
+
 void OdometryROS::OdomStatusTask::run(diagnostic_updater::DiagnosticStatusWrapper &stat)
 {
 	if(!dataReceived_)
@@ -1427,12 +1524,24 @@ void OdometryROS::OdomStatusTask::run(diagnostic_updater::DiagnosticStatusWrappe
 	{
 		stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Lost!");
 	}
+	else if(externalVelocityStatus_.find("Leg velocity mode") != externalVelocityStatus_.end() &&
+		(externalVelocityStatus_.at("Leg velocity mode") == "LEG_ASSIST" ||
+		 externalVelocityStatus_.at("Leg velocity mode") == "IMU_ONLY" ||
+		 externalVelocityStatus_.at("Leg velocity mode") == "RECOVERING"))
+	{
+		stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN,
+			"Tracking with visual-loss velocity aiding state.");
+	}
 	else
 	{
 		stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Tracking.");
 	}
 	stat.add("Topics Processed", processedMsgs_);
 	stat.add("Topics Dropped", droppedMsgs_);
+	for(const auto & value : externalVelocityStatus_)
+	{
+		stat.add(value.first, value.second);
+	}
 	processedMsgs_ = 0;
 	droppedMsgs_ = 0;
 }

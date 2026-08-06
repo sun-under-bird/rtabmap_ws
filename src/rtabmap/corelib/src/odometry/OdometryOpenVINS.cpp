@@ -48,7 +48,8 @@ OdometryOpenVINS::OdometryOpenVINS(const ParametersMap & parameters) :
 #ifdef RTABMAP_OPENVINS
     ,
 	initGravity_(false),
-	previousPoseInv_(Transform::getIdentity())
+	previousPoseInv_(Transform::getIdentity()),
+	legExtrinsicsDisabled_(false)
 #endif
 {
 #ifdef RTABMAP_OPENVINS
@@ -130,6 +131,23 @@ OdometryOpenVINS::OdometryOpenVINS(const ParametersMap & parameters) :
 	Parameters::parse(parameters, Parameters::kOdomOpenVINSZUPTNoiseMultiplier(), params_->zupt_noise_multiplier);
 	Parameters::parse(parameters, Parameters::kOdomOpenVINSZUPTMaxDisparity(), params_->zupt_max_disparity);
 	Parameters::parse(parameters, Parameters::kOdomOpenVINSZUPTOnlyAtBeginning(), params_->zupt_only_at_beginning);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityEnabled(), params_->leg_velocity_enabled);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityUseVertical(), params_->leg_velocity_use_vertical);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityUseYawRate(), params_->leg_velocity_use_yaw_rate);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityTimeOffset(), params_->leg_velocity_time_offset);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityMaxAge(), params_->leg_velocity_max_age);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityLossFrames(), params_->leg_velocity_loss_frames);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityLossTime(), params_->leg_velocity_loss_time);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityRecoveryTime(), params_->leg_velocity_recovery_time);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityMinActiveObservations(), params_->leg_velocity_min_active_observations);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityRecoveryAccepted(), params_->leg_velocity_recovery_accepted);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityHorizontalVarianceFloor(), params_->leg_velocity_horizontal_variance_floor);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityVerticalVarianceFloor(), params_->leg_velocity_vertical_variance_floor);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityYawRateVarianceFloor(), params_->leg_velocity_yaw_rate_variance_floor);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityChi2Multiplier(), params_->leg_velocity_chi2_multiplier);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityMaxLinearSpeed(), params_->leg_velocity_max_linear_speed);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityMaxVerticalSpeed(), params_->leg_velocity_max_vertical_speed);
+	Parameters::parse(parameters, Parameters::kOdomOpenVINSLegVelocityMaxYawRate(), params_->leg_velocity_max_yaw_rate);
 	Parameters::parse(parameters, Parameters::kOdomOpenVINSAccelerometerNoiseDensity(), params_->imu_noises.sigma_a);
 	Parameters::parse(parameters, Parameters::kOdomOpenVINSAccelerometerRandomWalk(), params_->imu_noises.sigma_ab);
 	Parameters::parse(parameters, Parameters::kOdomOpenVINSGyroscopeNoiseDensity(), params_->imu_noises.sigma_w);
@@ -184,6 +202,23 @@ OdometryOpenVINS::OdometryOpenVINS(const ParametersMap & parameters) :
 				parser->parse_config("zupt_noise_multiplier", params_->zupt_noise_multiplier);
 				parser->parse_config("zupt_max_disparity", params_->zupt_max_disparity);
 				parser->parse_config("zupt_only_at_beginning", params_->zupt_only_at_beginning);
+				parser->parse_config("leg_velocity_enabled", params_->leg_velocity_enabled);
+				parser->parse_config("leg_velocity_use_vertical", params_->leg_velocity_use_vertical);
+				parser->parse_config("leg_velocity_use_yaw_rate", params_->leg_velocity_use_yaw_rate);
+				parser->parse_config("leg_velocity_time_offset", params_->leg_velocity_time_offset);
+				parser->parse_config("leg_velocity_max_age", params_->leg_velocity_max_age);
+				parser->parse_config("leg_velocity_loss_frames", params_->leg_velocity_loss_frames);
+				parser->parse_config("leg_velocity_loss_time", params_->leg_velocity_loss_time);
+				parser->parse_config("leg_velocity_recovery_time", params_->leg_velocity_recovery_time);
+				parser->parse_config("leg_velocity_min_active_observations", params_->leg_velocity_min_active_observations);
+				parser->parse_config("leg_velocity_recovery_accepted", params_->leg_velocity_recovery_accepted);
+				parser->parse_config("leg_velocity_horizontal_variance_floor", params_->leg_velocity_horizontal_variance_floor);
+				parser->parse_config("leg_velocity_vertical_variance_floor", params_->leg_velocity_vertical_variance_floor);
+				parser->parse_config("leg_velocity_yaw_rate_variance_floor", params_->leg_velocity_yaw_rate_variance_floor);
+				parser->parse_config("leg_velocity_chi2_multiplier", params_->leg_velocity_chi2_multiplier);
+				parser->parse_config("leg_velocity_max_linear_speed", params_->leg_velocity_max_linear_speed);
+				parser->parse_config("leg_velocity_max_vertical_speed", params_->leg_velocity_max_vertical_speed);
+				parser->parse_config("leg_velocity_max_yaw_rate", params_->leg_velocity_max_yaw_rate);
 				parser->parse_config("record_timing_information", params_->record_timing_information);
 				parser->parse_config("record_timing_filepath", params_->record_timing_filepath);
 
@@ -234,6 +269,93 @@ OdometryOpenVINS::OdometryOpenVINS(const ParametersMap & parameters) :
 #endif
 }
 
+bool OdometryOpenVINS::canProcessExternalVelocity() const
+{
+#ifdef RTABMAP_OPENVINS
+	return params_.get() != 0 && params_->leg_velocity_enabled;
+#else
+	return false;
+#endif
+}
+
+void OdometryOpenVINS::processExternalVelocity(const ExternalVelocityMeasurement & measurement)
+{
+#ifdef RTABMAP_OPENVINS
+	if(!this->canProcessExternalVelocity())
+	{
+		return;
+	}
+	if(vioManager_)
+	{
+		ov_core::LegVelocityData legData;
+		legData.timestamp = measurement.stamp;
+		for(int i=0; i<4; ++i)
+		{
+			legData.measurement(i) = measurement.velocity[i];
+			for(int j=0; j<4; ++j)
+			{
+				legData.covariance(i,j) = measurement.covariance[i*4+j];
+			}
+		}
+		vioManager_->feed_measurement_leg_velocity(legData);
+	}
+	else
+	{
+		// OpenVINS 尚未收到首帧图像时保留最新足式数据，初始化器仍不会使用这些观测。
+		pendingLegVelocity_.push_back(measurement);
+		while(pendingLegVelocity_.size() > 200)
+		{
+			pendingLegVelocity_.pop_front();
+		}
+	}
+#else
+	(void)measurement;
+#endif
+}
+
+std::map<std::string, std::string> OdometryOpenVINS::externalVelocityDiagnostics() const
+{
+	std::map<std::string, std::string> diagnostics;
+#ifdef RTABMAP_OPENVINS
+	if(vioManager_ && this->canProcessExternalVelocity())
+	{
+		const ov_msckf::LegVelocityStatus status = vioManager_->get_leg_velocity_status();
+		std::string mode = "UNKNOWN";
+		switch(status.mode)
+		{
+		case ov_msckf::LegVelocityMode::DISABLED: mode = "DISABLED"; break;
+		case ov_msckf::LegVelocityMode::WAITING: mode = "WAITING"; break;
+		case ov_msckf::LegVelocityMode::VISUAL_ONLY: mode = "VISUAL_ONLY"; break;
+		case ov_msckf::LegVelocityMode::LEG_ASSIST: mode = "LEG_ASSIST"; break;
+		case ov_msckf::LegVelocityMode::IMU_ONLY: mode = "IMU_ONLY"; break;
+		case ov_msckf::LegVelocityMode::RECOVERING: mode = "RECOVERING"; break;
+		}
+		diagnostics["Leg velocity mode"] = mode;
+		diagnostics["Leg update reason"] = status.reason;
+		diagnostics["Leg update accepted"] = status.update_accepted?"true":"false";
+		diagnostics["Leg measurement age"] = std::to_string(status.measurement_age);
+		diagnostics["Leg innovation chi2"] = std::to_string(status.chi2);
+		diagnostics["Leg innovation threshold"] = std::to_string(status.chi2_threshold);
+		diagnostics["Leg innovation vx"] = std::to_string(status.innovation(0));
+		diagnostics["Leg innovation vy"] = std::to_string(status.innovation(1));
+		diagnostics["Leg innovation vz"] = std::to_string(status.innovation(2));
+		diagnostics["Leg innovation yaw rate"] = std::to_string(status.innovation(3));
+		diagnostics["Visual active observations"] = std::to_string(status.active_observations);
+		diagnostics["Visual accepted constraints"] = std::to_string(status.visual_accepted);
+		diagnostics["Visual MSCKF candidates"] = std::to_string(status.msckf_candidates);
+		diagnostics["Visual MSCKF selected"] = std::to_string(status.msckf_selected);
+		diagnostics["Visual MSCKF accepted"] = std::to_string(status.msckf_accepted);
+		diagnostics["Visual SLAM update candidates"] = std::to_string(status.slam_update_candidates);
+		diagnostics["Visual SLAM update accepted"] = std::to_string(status.slam_update_accepted);
+		diagnostics["Visual SLAM init candidates"] = std::to_string(status.slam_init_candidates);
+		diagnostics["Visual SLAM init accepted"] = std::to_string(status.slam_init_accepted);
+		diagnostics["IMU to base lever arm"] = std::to_string(status.lever_arm(0)) + "," +
+			std::to_string(status.lever_arm(1)) + "," + std::to_string(status.lever_arm(2));
+	}
+#endif
+	return diagnostics;
+}
+
 void OdometryOpenVINS::reset(const Transform & initialPose)
 {
 	Odometry::reset(initialPose);
@@ -243,6 +365,8 @@ void OdometryOpenVINS::reset(const Transform & initialPose)
 		vioManager_.reset();
 		previousPoseInv_.setIdentity();
 		imuLocalTransformInv_.setNull();
+		pendingLegVelocity_.clear();
+		legExtrinsicsDisabled_ = false;
 	}
 	initGravity_ = false;
 #endif
@@ -396,10 +520,42 @@ Transform OdometryOpenVINS::computeTransform(
 			params_->init_options.camera_intrinsics = params_->camera_intrinsics;
 			params_->init_options.camera_extrinsics = params_->camera_extrinsics;
 			vioManager_ = std::make_unique<ov_msckf::VioManager>(*params_);
+			if(params_->leg_velocity_enabled)
+			{
+				// imuLocalTransformInv_ 是 T_I_B，其平移正是从头部 IMU 指向 base_link 原点的杆臂。
+				const Eigen::Matrix4d T_I_B = imuLocalTransformInv_.toEigen4d();
+				const Eigen::Matrix3d R_B_I = T_I_B.block<3,3>(0,0).transpose();
+				vioManager_->set_leg_velocity_extrinsics(R_B_I, T_I_B.block<3,1>(0,3));
+				for(const ExternalVelocityMeasurement & measurement : pendingLegVelocity_)
+				{
+					this->processExternalVelocity(measurement);
+				}
+				pendingLegVelocity_.clear();
+			}
 		}
 	}
 	else
 	{
+		if(params_->leg_velocity_enabled && !legExtrinsicsDisabled_ && !data.imu().empty())
+		{
+			// 每条异步 IMU 都携带当前 TF；固定杆臂缺失或运行中改变时永久禁用本次实例的足式更新。
+			const Transform & imuLocalTransform = data.imu().localTransform();
+			if(imuLocalTransform.isNull())
+			{
+				legExtrinsicsDisabled_ = true;
+				vioManager_->disable_leg_velocity_extrinsics("imu_tf_missing");
+			}
+			else
+			{
+				const Eigen::Matrix4d currentT_I_B = imuLocalTransform.inverse().toEigen4d();
+				const Eigen::Matrix4d initialT_I_B = imuLocalTransformInv_.toEigen4d();
+				if(!currentT_I_B.allFinite() || !currentT_I_B.isApprox(initialT_I_B, 1e-6))
+				{
+					legExtrinsicsDisabled_ = true;
+					vioManager_->disable_leg_velocity_extrinsics("imu_tf_changed");
+				}
+			}
+		}
 		if(!data.imu().empty())
 		{
 			ov_core::ImuData message;

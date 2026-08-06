@@ -30,6 +30,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <rtabmap/core/Odometry.h>
 
+#include <deque>
+
 namespace ov_msckf {
 class VioManager;
 struct VioManagerOptions;
@@ -46,6 +48,12 @@ public:
 	virtual Odometry::Type getType() {return Odometry::kTypeOpenVINS;}
 	virtual bool canProcessRawImages() const {return true;}
 	virtual bool canProcessAsyncIMU() const {return true;}
+	/// 仅在参数开启时声明支持 ROS 无关的外部足式速度观测。
+	virtual bool canProcessExternalVelocity() const;
+	/// 将一条四维足式速度观测缓存到 OpenVINS，相机线程随后只消费一次。
+	virtual void processExternalVelocity(const ExternalVelocityMeasurement & measurement);
+	/// 返回足式辅助状态、创新、门控结果和杆臂诊断。
+	virtual std::map<std::string, std::string> externalVelocityDiagnostics() const;
 
 private:
 	virtual Transform computeTransform(SensorData & image, const Transform & guess = Transform(), OdometryInfo * info = 0);
@@ -58,6 +66,8 @@ private:
 	Transform previousPoseInv_;
 	Transform imuLocalTransformInv_;
 	Eigen::Matrix<double, 6, 6> Phi_;
+	std::deque<ExternalVelocityMeasurement> pendingLegVelocity_;
+	bool legExtrinsicsDisabled_;
 #endif
 };
 

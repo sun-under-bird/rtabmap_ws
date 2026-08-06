@@ -673,6 +673,24 @@ class RTABMAP_CORE_EXPORT Parameters
     RTABMAP_PARAM(OdomOpenVINS, ZUPTMaxDisparity,          double, 0.5,    "Max disparity we will consider to try to do a zupt (i.e. if above this, don't do zupt).");
     RTABMAP_PARAM(OdomOpenVINS, ZUPTOnlyAtBeginning,       bool,   false,  "If we should only use the zupt at the very beginning static initialization phase.");
 
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityEnabled,        bool,   false,  "Enable conditional leg velocity updates when visual constraints are lost.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityUseVertical,    bool,   true,   "Use base_link vertical velocity from leg odometry.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityUseYawRate,     bool,   true,   "Use independent yaw rate from leg odometry.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityTimeOffset,     double, 0.0,    "Leg odometry time offset in seconds, positive means the measurement happened later.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityMaxAge,         double, 0.15,   "Maximum age in seconds of a leg velocity measurement.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityLossFrames,     int,    3,      "Consecutive camera frames without accepted visual updates before enabling leg aiding.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityLossTime,       double, 0.2,    "Maximum time without an accepted visual update before enabling leg aiding.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityRecoveryTime,   double, 0.5,    "Stable visual recovery duration before disabling leg aiding.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityMinActiveObservations, int, 60, "Minimum active visual observations required for recovery.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityRecoveryAccepted, int,  10,     "Minimum accepted visual constraints in the recovery window.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityHorizontalVarianceFloor, double, 0.05, "Horizontal velocity measurement variance floor.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityVerticalVarianceFloor, double, 0.10, "Vertical velocity measurement variance floor.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityYawRateVarianceFloor, double, 0.02, "Yaw-rate measurement variance floor.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityChi2Multiplier, double, 1.0,    "Chi-square gate multiplier for leg velocity updates.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityMaxLinearSpeed, double, 5.0,    "Maximum accepted three-dimensional leg velocity in m/s.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityMaxVerticalSpeed, double, 2.0,  "Maximum accepted absolute vertical velocity in m/s.");
+    RTABMAP_PARAM(OdomOpenVINS, LegVelocityMaxYawRate,     double, 6.0,    "Maximum accepted absolute yaw rate in rad/s.");
+
     RTABMAP_PARAM(OdomOpenVINS, AccelerometerNoiseDensity, double, 0.01,   "[m/s^2/sqrt(Hz)] (accel \"white noise\").");
     RTABMAP_PARAM(OdomOpenVINS, AccelerometerRandomWalk,   double, 0.001,  "[m/s^3/sqrt(Hz)] (accel bias diffusion).");
     RTABMAP_PARAM(OdomOpenVINS, GyroscopeNoiseDensity,     double, 0.001,  "[rad/s/sqrt(Hz)] (gyro \"white noise\").");

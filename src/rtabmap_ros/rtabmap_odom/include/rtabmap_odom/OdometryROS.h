@@ -105,6 +105,8 @@ private:
 	virtual void onOdomInit() {}
 
 	void callbackIMU(const sensor_msgs::msg::Imu::SharedPtr msg);
+	/// 只校验并缓存足式里程计，避免回调线程并发访问 OpenVINS。
+	void callbackLegOdometry(const nav_msgs::msg::Odometry::SharedPtr msg);
 	void reset(const rtabmap::Transform & pose = rtabmap::Transform::getIdentity());
 
 protected:
@@ -156,10 +158,12 @@ private:
 	std::shared_ptr<tf2_ros::Buffer> tfBuffer_;
 	std::shared_ptr<tf2_ros::TransformListener> tfListener_;
 	rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imuSub_;
+	rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr legOdomSub_;
 	rclcpp::CallbackGroup::SharedPtr imuCallbackGroup_;
 
 	// Safe-threading
 	UMutex imuMutex_;
+	UMutex legOdomMutex_;
 	UMutex dataMutex_;	
 	USemaphore dataReady_;
 	rtabmap::SensorData dataToProcess_;
@@ -191,6 +195,7 @@ private:
 	int processedMsgs_;
 	int droppedMsgs_;
 	std::map<double, sensor_msgs::msg::Imu::ConstSharedPtr> imus_;
+	std::map<double, nav_msgs::msg::Odometry::ConstSharedPtr> legOdoms_;
 	std::string configPath_;
 	rtabmap::Transform initialPose_;
 	rtabmap::Transform imuLocalTransform_;
@@ -202,12 +207,15 @@ private:
 	public:
 		OdomStatusTask();
 		void setStatus(bool isLost, int processedMsgs, int droppedMsgs);
+		/// 更新 OpenVINS 足式辅助诊断快照。
+		void setExternalVelocityStatus(const std::map<std::string, std::string> & status);
 		void run(diagnostic_updater::DiagnosticStatusWrapper &stat);
 	private:
 		bool lost_;
 		bool dataReceived_;
 		int processedMsgs_;
 		int droppedMsgs_;
+		std::map<std::string, std::string> externalVelocityStatus_;
 	};
 	OdomStatusTask statusDiagnostic_;
 	std::unique_ptr<rtabmap_sync::SyncDiagnostic> syncDiagnostic_;

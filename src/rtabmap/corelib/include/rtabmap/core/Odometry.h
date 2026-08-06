@@ -34,10 +34,24 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rtabmap/core/SensorData.h>
 #include <rtabmap/core/Parameters.h>
 
+#include <array>
+#include <map>
+#include <string>
+
 namespace rtabmap {
 
 class OdometryInfo;
 class ParticleFilter;
+
+/**
+ * @brief 与 ROS 解耦的外部速度观测，分量顺序为 vx、vy、vz、yaw_rate。
+ */
+struct RTABMAP_CORE_EXPORT ExternalVelocityMeasurement
+{
+	double stamp = -1.0;
+	std::array<double, 4> velocity{{0.0, 0.0, 0.0, 0.0}};
+	std::array<double, 16> covariance{{0.0}};
+};
 
 class RTABMAP_CORE_EXPORT Odometry
 {
@@ -73,6 +87,12 @@ public:
 	virtual Odometry::Type getType() = 0;
 	virtual bool canProcessRawImages() const {return false;}
 	virtual bool canProcessAsyncIMU() const {return false;}
+	/// 返回具体里程计是否支持外部速度观测，默认关闭以保持原有实现行为。
+	virtual bool canProcessExternalVelocity() const {return false;}
+	/// 接收 ROS 无关的外部速度观测，默认空实现不会改变任何状态。
+	virtual void processExternalVelocity(const ExternalVelocityMeasurement & /*measurement*/) {}
+	/// 返回外部速度融合诊断键值，默认实现为空。
+	virtual std::map<std::string, std::string> externalVelocityDiagnostics() const {return std::map<std::string, std::string>();}
 
 	//getters
 	const Transform & getPose() const {return _pose;}
