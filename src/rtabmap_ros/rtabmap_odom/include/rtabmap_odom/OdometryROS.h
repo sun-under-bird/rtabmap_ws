@@ -190,6 +190,7 @@ private:
 	bool compressionParallelized_;
 	int odomStrategy_;
 	bool waitIMUToinit_;
+	double imuLookahead_;
 	bool alwaysCheckImuTf_;
 	bool imuProcessed_;
 	int processedMsgs_;

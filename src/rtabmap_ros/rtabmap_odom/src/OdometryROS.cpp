@@ -103,6 +103,7 @@ OdometryROS::OdometryROS(const std::string & name, const rclcpp::NodeOptions & o
 	compressionParallelized_(true),
 	odomStrategy_(Parameters::defaultOdomStrategy()),
 	waitIMUToinit_(false),
+	imuLookahead_(0.0),
 	alwaysCheckImuTf_(true),
 	imuProcessed_(false),
 	processedMsgs_(0),
@@ -159,6 +160,12 @@ OdometryROS::OdometryROS(const std::string & name, const rclcpp::NodeOptions & o
 	compressionParallelized_ = this->declare_parameter("sensor_data_parallel_compression", compressionParallelized_);
 
 	waitIMUToinit_ = this->declare_parameter("wait_imu_to_init", waitIMUToinit_);
+	imuLookahead_ = this->declare_parameter("imu_lookahead", imuLookahead_);
+	if(imuLookahead_ < 0.0)
+	{
+		RCLCPP_WARN(this->get_logger(), "Odometry: imu_lookahead cannot be negative (%f), using 0 instead.", imuLookahead_);
+		imuLookahead_ = 0.0;
+	}
 	alwaysCheckImuTf_ = this->declare_parameter("always_check_imu_tf", alwaysCheckImuTf_);
 	
 
@@ -217,6 +224,7 @@ OdometryROS::OdometryROS(const std::string & name, const rclcpp::NodeOptions & o
 	RCLCPP_INFO(this->get_logger(), "Odometry: max_update_rate        = %f Hz", maxUpdateRate_);
 	RCLCPP_INFO(this->get_logger(), "Odometry: min_update_rate        = %f Hz", minUpdateRate_);
 	RCLCPP_INFO(this->get_logger(), "Odometry: wait_imu_to_init       = %s", waitIMUToinit_?"true":"false");
+	RCLCPP_INFO(this->get_logger(), "Odometry: imu_lookahead          = %f s", imuLookahead_);
 	RCLCPP_INFO(this->get_logger(), "Odometry: always_check_imu_tf    = %s", alwaysCheckImuTf_?"true":"false");
 	RCLCPP_INFO(this->get_logger(), "Odometry: sensor_data_compression_format = %s", compressionImgFormat_.c_str());
 	RCLCPP_INFO(this->get_logger(), "Odometry: sensor_data_parallel_compression = %s", compressionParallelized_?"true":"false");
@@ -472,7 +480,7 @@ void OdometryROS::callbackIMU(const sensor_msgs::msg::Imu::SharedPtr msg)
 		}
 		if(dataMutex_.lockTry() == 0)
 		{
-			if(bufferedDataToProcess_ && rtabmap_conversions::timestampFromROS(dataHeaderToProcess_.stamp) <= stamp)
+			if(bufferedDataToProcess_ && rtabmap_conversions::timestampFromROS(dataHeaderToProcess_.stamp) + imuLookahead_ <= stamp)
 			{
 				bufferedDataToProcess_ = false;
 				dataReady_.release();
@@ -606,7 +614,8 @@ void OdometryROS::processData()
 			return;
 		}
 
-		if(waitIMUToinit_ && (imus_.empty() || imus_.rbegin()->first < rtabmap_conversions::timestampFromROS(header.stamp)))
+		const double imuTargetStamp = rtabmap_conversions::timestampFromROS(header.stamp) + imuLookahead_;
+		if(waitIMUToinit_ && (imus_.empty() || imus_.rbegin()->first < imuTargetStamp))
 		{
 			if(imus_.empty()) {
 				// If empty, it is an error!
@@ -616,8 +625,9 @@ void OdometryROS::processData()
 			bufferedDataToProcess_ = true;
 			return;
 		}
-		// process all imu data up to current image stamp (or just after so that underlying odom approach can do interpolation of imu at image stamp)
-		std::map<double, sensor_msgs::msg::Imu::ConstSharedPtr>::iterator iterEnd = imus_.lower_bound(rtabmap_conversions::timestampFromROS(header.stamp));
+		// Process IMU up to the image stamp plus optional lookahead. OpenVINS may estimate
+		// a positive camera-to-IMU time offset, so it needs samples bracketing that future time.
+		std::map<double, sensor_msgs::msg::Imu::ConstSharedPtr>::iterator iterEnd = imus_.lower_bound(imuTargetStamp);
 		std::map<double, sensor_msgs::msg::Imu::ConstSharedPtr>::iterator iterLast = iterEnd;
 		if(iterEnd!= imus_.end())
 		{

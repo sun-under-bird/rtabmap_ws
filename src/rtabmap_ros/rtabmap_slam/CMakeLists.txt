@@ -210,7 +210,14 @@ endif()
 rclcpp_components_register_nodes(rtabmap_slam_plugins "rtabmap_slam::CoreWrapper")
 
 add_executable(rtabmap_node src/CoreNode.cpp)
-target_link_libraries(rtabmap_node PRIVATE rtabmap_slam_plugins)
+if("$ENV{ROS_DISTRO}" STRLESS "lyrical")
+  ament_target_dependencies(rtabmap_node rtabmap_sync)
+  target_link_libraries(rtabmap_node rtabmap_slam_plugins)
+else()
+  target_link_libraries(rtabmap_node PRIVATE
+    rtabmap_sync::rtabmap_sync
+    rtabmap_slam_plugins)
+endif()
 set_target_properties(rtabmap_node PROPERTIES OUTPUT_NAME "rtabmap")
 
 #############
