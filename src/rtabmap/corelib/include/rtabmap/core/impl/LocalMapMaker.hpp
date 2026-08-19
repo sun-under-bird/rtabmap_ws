@@ -183,7 +183,14 @@ typename pcl::PointCloud<PointT>::Ptr LocalGridMaker::segmentCloud(
 					rtabmap::util3d::rangeSplitFiltering(cloud, groundIndices, rangeMax_, closeIndices, farIndices);
 					groundIndices = closeIndices;
 				}
-				groundIndices = rtabmap::util3d::radiusFiltering(cloud, groundIndices, noiseFilteringRadius_, noiseFilteringMinNeighbors_);
+				// radiusFiltering() treats empty indices as "use the whole cloud", so
+				// filtering an empty close set would silently pull in every point of the
+				// frame. That happens as soon as all points of this category are farther
+				// than rangeMax_ (e.g. in an open area, every obstacle is far away).
+				if(groundIndices->size())
+				{
+					groundIndices = rtabmap::util3d::radiusFiltering(cloud, groundIndices, noiseFilteringRadius_, noiseFilteringMinNeighbors_);
+				}
 				if(farIndices.get())
 				{
 					groundIndices = rtabmap::util3d::concatenate(groundIndices, farIndices);
@@ -199,7 +206,11 @@ typename pcl::PointCloud<PointT>::Ptr LocalGridMaker::segmentCloud(
 					rtabmap::util3d::rangeSplitFiltering(cloud, obstaclesIndices, rangeMax_, closeIndices, farIndices);
 					obstaclesIndices = closeIndices;
 				}
-				obstaclesIndices = rtabmap::util3d::radiusFiltering(cloud, obstaclesIndices, noiseFilteringRadius_, noiseFilteringMinNeighbors_);
+				// See the note above: never call radiusFiltering() with an empty index set.
+				if(obstaclesIndices->size())
+				{
+					obstaclesIndices = rtabmap::util3d::radiusFiltering(cloud, obstaclesIndices, noiseFilteringRadius_, noiseFilteringMinNeighbors_);
+				}
 				if(farIndices.get())
 				{
 					obstaclesIndices = rtabmap::util3d::concatenate(obstaclesIndices, farIndices);
@@ -215,7 +226,11 @@ typename pcl::PointCloud<PointT>::Ptr LocalGridMaker::segmentCloud(
 					rtabmap::util3d::rangeSplitFiltering(cloud, *flatObstacles, rangeMax_, closeIndices, farIndices);
 					*flatObstacles = closeIndices;
 				}
-				*flatObstacles = rtabmap::util3d::radiusFiltering(cloud, *flatObstacles, noiseFilteringRadius_, noiseFilteringMinNeighbors_);
+				// See the note above: never call radiusFiltering() with an empty index set.
+				if((*flatObstacles)->size())
+				{
+					*flatObstacles = rtabmap::util3d::radiusFiltering(cloud, *flatObstacles, noiseFilteringRadius_, noiseFilteringMinNeighbors_);
+				}
 				if(farIndices.get())
 				{
 					*flatObstacles = rtabmap::util3d::concatenate(*flatObstacles, farIndices);

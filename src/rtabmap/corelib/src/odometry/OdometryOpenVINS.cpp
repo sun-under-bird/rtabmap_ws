@@ -654,6 +654,9 @@ Transform OdometryOpenVINS::computeTransform(
 					info->type = this->getType();
 					info->localMapSize = feat_posinG.size();
 					info->features = features_SLAM.size() + good_features_MSCKF.size();
+					// OpenVINS 返回的是当前仍有效的 SLAM/MSCKF 特征。同步填充
+					// RegistrationInfo::inliers，避免 ROS 日志和 OdomInfo 永远显示 quality=0。
+					info->reg.inliers = info->features;
 					info->reg.covariance = cv::Mat::eye(6, 6, CV_64FC1);
 					if(covFilled)
 					{

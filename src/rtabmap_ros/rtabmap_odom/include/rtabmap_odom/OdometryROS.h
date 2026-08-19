@@ -51,6 +51,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <boost/thread.hpp>
 
+#include <mutex>
+
 #include "rtabmap_util/ULogToRosout.h"
 #include "rtabmap_sync/SyncDiagnostic.h"
 
@@ -217,6 +219,7 @@ private:
 		int processedMsgs_;
 		int droppedMsgs_;
 		std::map<std::string, std::string> externalVelocityStatus_;
+		std::mutex statusMutex_;
 	};
 	OdomStatusTask statusDiagnostic_;
 	std::unique_ptr<rtabmap_sync::SyncDiagnostic> syncDiagnostic_;

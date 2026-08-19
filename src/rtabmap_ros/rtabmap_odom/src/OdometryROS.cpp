@@ -1512,6 +1512,7 @@ OdometryROS::OdomStatusTask::OdomStatusTask() :
 
 void OdometryROS::OdomStatusTask::setStatus(bool isLost, int processedMsgs, int droppedMsgs)
 {
+	std::lock_guard<std::mutex> lock(statusMutex_);
 	dataReceived_ = true;
 	lost_ = isLost;
 	processedMsgs_ += processedMsgs;
@@ -1521,11 +1522,13 @@ void OdometryROS::OdomStatusTask::setStatus(bool isLost, int processedMsgs, int 
 void OdometryROS::OdomStatusTask::setExternalVelocityStatus(const std::map<std::string, std::string> & status)
 {
 	// 保存快照，diagnostic_updater 下一次运行时统一发布。
+	std::lock_guard<std::mutex> lock(statusMutex_);
 	externalVelocityStatus_ = status;
 }
 
 void OdometryROS::OdomStatusTask::run(diagnostic_updater::DiagnosticStatusWrapper &stat)
 {
+	std::lock_guard<std::mutex> lock(statusMutex_);
 	if(!dataReceived_)
 	{
 		stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "No data received!");
